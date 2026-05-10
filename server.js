@@ -97,106 +97,6 @@ async function handleNewOrder(payload) {
     // Look up SMMCost service ID
     const smmServiceId = serviceMap[offerId];
     if (!smmServiceId) {
-      console.error(`[ORDER] No SM<dyad-write path="server.js" description="Complete Express server with G2G webhook and SMMCost fulfillment">
-require('dotenv').config();
-const express = require('express');
-const crypto = require('crypto');
-const axios = require('axios');
-
-const app = express();
-app.use(express.json());
-
-// Configuration
-const G2G_BASE_URL = 'https://open-api.g2g.com';
-const SMMCOST_BASE_URL = 'https://smmcost.com/api/v2';
-const POLL_INTERVAL = parseInt(process.env.POLL_INTERVAL || '120000', 10);
-const MAX_PENDING_HOURS = 24;
-
-// In-memory order tracking
-const pendingOrders = new Map();
-
-// Load service map
-const fs = require('fs');
-const path = require('path');
-const serviceMapPath = path.join(__dirname, 'service-map.json');
-let serviceMap = {};
-
-try {
-  serviceMap = JSON.parse(fs.readFileSync(serviceMapPath, 'utf8'));
-  console.log(`[INIT] Loaded ${Object.keys(serviceMap).length} service mappings`);
-} catch (err) {
-  console.warn('[INIT] Could not load service-map.json, using empty map');
-}
-
-// ============================================
-// G2G Webhook Handler
-// ============================================
-app.post('/webhook/g2g', async (req, res) => {
-  const timestamp = req.headers['g2g-timestamp'];
-  const signature = req.headers['g2g-signature'];
-  const rawBody = JSON.stringify(req.body);
-
-  // Verify signature
-  if (!verifyG2GSignature(timestamp, rawBody, signature)) {
-    console.warn('[WEBHOOK] Invalid signature received');
-    return res.status(401).json({ error: 'Invalid signature' });
-  }
-
-  console.log('[WEBHOOK] Received G2G webhook');
-  console.log('[WEBHOOK] Event type:', req.body.event_type);
-
-  if (req.body.event_type === 'order.api_delivery') {
-    await handleNewOrder(req.body);
-  }
-
-  res.status(200).json({ status: 'received' });
-});
-
-// ============================================
-// HMAC-SHA256 Signature Verification
-// ============================================
-function verifyG2GSignature(timestamp, rawBody, signature) {
-  if (!timestamp || !signature) return false;
-  
-  const secret = process.env.G2G_SECRET;
-  if (!secret) {
-    console.error('[AUTH] G2G_SECRET not configured');
-    return false;
-  }
-
-  const payload = `${timestamp}.${rawBody}`;
-  const expectedSignature = crypto
-    .createHmac('sha256', secret)
-    .update(payload)
-    .digest('hex');
-
-  return crypto.timingSafeEqual(
-    Buffer.from(signature),
-    Buffer.from(expectedSignature)
-  );
-}
-
-// ============================================
-// Handle New Order from G2G
-// ============================================
-async function handleNewOrder(payload) {
-  try {
-    const order = payload.order;
-    const delivery = payload.delivery;
-    
-    if (!order || !delivery) {
-      console.error('[ORDER] Missing order or delivery data');
-      return;
-    }
-
-    const offerId = order.offer_id.toString();
-    const g2gOrderId = order.id;
-    const g2gDeliveryId = delivery.id;
-    const qty = order.quantity;
-
-    // Look up SMMCost service ID
-    const smmServiceId = serviceMap[offerId];
-    if (!smmServiceId) {
       console.error(`[ORDER] No SMMCost service mapping for offer_id: ${offerId}`);
       return;
     }
@@ -351,20 +251,25 @@ async function pollOrders() {
 }
 
 // ============================================
-// G2G Delivery Confirmation
+// G2G Delivery Confirmation (CORRECTED API)
 // ============================================
 async function confirmG2GDelivery(orderData, smmStatus) {
-  const { g2gDeliveryId, smmOrderId, offerId, qty } = orderData;
+  const { g2gOrderId, g2gDeliveryId, smmOrderId, qty } = orderData;
   
   try {
-    const deliveryCode = `SMM-${smmOrderId}`;
+    // Generate unique reference ID for this delivery
+    const referenceId = `SMM-${smmOrderId}-${Date.now()}`;
     
-    const response = await axios.patch(
-      `${G2G_BASE_URL}/v2/deliveries/${g2gDeliveryId}`,
+    // Correct API: POST /v2/orders/{order_id}/delivery
+    const response = await axios.post(
+      `${G2G_BASE_URL}/v2/orders/${g2gOrderId}/delivery`,
       {
-        delivery_code: deliveryCode,
-        status: 'delivered',
-        notes: `Fulfilled via SMMCost. Order: ${smmOrderId}, Qty: ${qty}`
+        delivery_id: g2gDeliveryId,
+        codes: [{
+          content: `Fulfilled via SMMCost. Order: ${smmOrderId}, Qty: ${qty}`,
+          content_type: 'text/plain',
+          reference_id: referenceId
+        }]
       },
       {
         headers: {
@@ -374,11 +279,18 @@ async function confirmG2GDelivery(orderData, smmStatus) {
       }
     );
 
-    console.log(`[G2G] Delivery ${g2gDeliveryId} confirmed: ${deliveryCode}`);
+    console.log(`[G2G] Delivery ${g2gDeliveryId} confirmed for order ${g2gOrderId}`);
+    console.log(`[G2G] Reference ID: ${referenceId}`);
+    
+    return response.data;
     
   } catch (err) {
     console.error(`[G2G] Failed to confirm delivery ${g2gDeliveryId}:`, err.message);
+    if (err.response?.data) {
+      console.error('[G2G] Response:', JSON.stringify(err.response.data));
+    }
     // Don't remove from tracking - will retry on next poll
+    return null;
   }
 }
 
@@ -417,6 +329,8 @@ app.get('/pending', (req, res) => {
 // ============================================
 // Graceful Shutdown
 // ============================================
+let pollInterval;
+
 process.on('SIGINT', () => {
   console.log('\n[SHUTDOWN] Stopping polling loop...');
   clearInterval(pollInterval);
@@ -456,5 +370,5 @@ app.listen(PORT, () => {
 });
 
 // Start polling loop
-const pollInterval = setInterval(pollOrders, POLL_INTERVAL);
+pollInterval = setInterval(pollOrders, POLL_INTERVAL);
 console.log('[INIT] Order polling started');

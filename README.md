@@ -1,6 +1,6 @@
 # G2G ↔ SMMCost Automation Bridge
 
-An automation server that bridges G2G marketplace orders with SMMCost SMM panel fulfillment. When a buyer purchases a Platform Engagement service on G2G, this server automatically fulfills the order via SMMCost API.
+An automation server that bridges G2G marketplace orders with SMMCost SMM panel fulfillment. When a buyer purchases a Platform Engagement service on G2G, this server automatically fulfills the order via SMMCost API and confirms delivery back to G2G — fully hands-free.
 
 ## Features
 
@@ -9,7 +9,7 @@ An automation server that bridges G2G marketplace orders with SMMCost SMM panel 
 - Maps G2G offer IDs to SMMCost service IDs
 - Places orders on SMMCost automatically
 - Polls for order completion every 2 minutes
-- Confirms delivery back to G2G
+- Confirms delivery back to G2G (POST /v2/orders/{order_id}/delivery)
 - Health monitoring endpoints
 
 ## Setup
@@ -168,7 +168,7 @@ Lists all orders currently being tracked.
     {
       "smmOrderId": "12345",
       "g2gOrderId": "67890",
-      "g2gDeliveryId": "abc123",
+      "g2gDeliveryId": "D123456",
       "offerId": "OFFER_001",
       "qty": 100,
       "link": "https://instagram.com/p/ABC123",
@@ -181,20 +181,40 @@ Lists all orders currently being tracked.
 }
 ```
 
+## G2G API Integration
+
+### Webhook Signature Verification
+HMAC-SHA256(secret, timestamp + "." + raw_body)
+
+### Delivery Confirmation
+**Endpoint:** `POST /v2/orders/{order_id}/delivery`
+
+**Request Body:**
+```json
+{
+  "delivery_id": "D123456",
+  "codes": [{
+    "content": "Fulfilled via SMMCost. Order: 12345, Qty: 100",
+    "content_type": "text/plain",
+    "reference_id": "SMM-12345-1705312200000"
+  }]
+}
+```
+
 ## Order Flow
 
 1. **Webhook Received**: Server verifies signature and extracts order details
 2. **Service Lookup**: Maps G2G offer_id to SMMCost service ID
 3. **Order Placed**: Creates order on SMMCost API
 4. **Polling**: Checks order status every 2 minutes
-5. **Confirmation**: When completed, updates G2G delivery status
+5. **Confirmation**: When completed, calls POST /v2/orders/{order_id}/delivery on G2G
 
 ## Error Handling
 
 - Invalid webhook signature → 401 Unauthorized, logged
 - Unknown offer_id → Logged, order skipped
 - SMMCost API error → Logged, does not crash
-- G2G confirmation failure → Logged, retries on next poll
+- G2G delivery confirmation failure → Logged, retries on next poll
 - Order pending >24 hours → Warning logged
 
 ## Logs
@@ -206,7 +226,8 @@ All operations are logged to console with timestamps:
 [ORDER] Processing G2G order: 12345
 [SMMCOST] Order placed: 67890
 [POLL] Checking 5 pending orders...
-[G2G] Delivery confirmed: SMM-67890
+[G2G] Delivery D123456 confirmed for order 67890
+[G2G] Reference ID: SMM-67890-1705312200000
 ```
 
 ## Utility Scripts
