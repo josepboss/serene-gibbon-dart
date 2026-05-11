@@ -7,8 +7,8 @@ const path = require('path');
 const app = express();
 app.use(express.json());
 
-// Serve static files from React build (if exists)
-const distPath = path.join(__dirname, 'dist');
+// Serve static files from React build
+const distPath = path.join(__dirname, 'src', 'dist');
 app.use(express.static(distPath));
 
 // Configuration
@@ -40,7 +40,6 @@ app.post('/webhook/g2g', async (req, res) => {
   const signature = req.headers['g2g-signature'];
   const rawBody = JSON.stringify(req.body);
 
-  // Verify signature
   if (!verifyG2GSignature(timestamp, rawBody, signature)) {
     console.warn('[WEBHOOK] Invalid signature received');
     return res.status(401).json({ error: 'Invalid signature' });
@@ -98,14 +97,12 @@ async function handleNewOrder(payload) {
     const g2gDeliveryId = delivery.id;
     const qty = order.quantity;
 
-    // Look up SMMCost service ID
     const smmServiceId = serviceMap[offerId];
     if (!smmServiceId) {
       console.error(`[ORDER] No SMMCost service mapping for offer_id: ${offerId}`);
       return;
     }
 
-    // Extract delivery info from additional_info_list
     const additionalInfo = delivery.delivery_summary?.additional_info_list || [];
     let link = '';
     let username = '';
@@ -119,7 +116,6 @@ async function handleNewOrder(payload) {
       }
     }
 
-    // Fallback to order link if not in additional info
     if (!link && order.link) {
       link = order.link;
     }
@@ -128,7 +124,6 @@ async function handleNewOrder(payload) {
     console.log(`[ORDER] Offer ID: ${offerId} → SMMCost Service: ${smmServiceId}`);
     console.log(`[ORDER] Quantity: ${qty}, Link: ${link}`);
 
-    // Place order on SMMCost
     const smmResult = await placeSMMOrder(smmServiceId, link, qty);
     
     if (!smmResult || smmResult.error) {
@@ -139,7 +134,6 @@ async function handleNewOrder(payload) {
     const smmOrderId = smmResult.order;
     console.log(`[ORDER] SMMCost order placed: ${smmOrderId}`);
 
-    // Track the order
     const orderData = {
       smmOrderId,
       g2gOrderId,
@@ -220,7 +214,6 @@ async function pollOrders() {
         continue;
       }
 
-      // Extract status from response
       const statusData = result[smmOrderId];
       const status = statusData?.status || 'Unknown';
       
@@ -229,19 +222,14 @@ async function pollOrders() {
 
       console.log(`[POLL] Order ${smmOrderId}: ${status}`);
 
-      // Check for completion or partial completion
       if (status === 'Completed' || status === 'Partial') {
         await confirmG2GDelivery(orderData, statusData);
         pendingOrders.delete(smmOrderId);
         console.log(`[POLL] Order ${smmOrderId} completed, removed from tracking`);
-      }
-      // Check for cancellation
-      else if (status === 'Canceled') {
+      } else if (status === 'Canceled') {
         console.warn(`[POLL] Order ${smmOrderId} was canceled`);
         pendingOrders.delete(smmOrderId);
-      }
-      // Check for stale orders (> 24 hours)
-      else {
+      } else {
         const hoursPending = (Date.now() - orderData.createdAt) / (1000 * 60 * 60);
         if (hoursPending > MAX_PENDING_HOURS) {
           console.warn(`[POLL] Order ${smmOrderId} pending for ${hoursPending.toFixed(1)} hours`);
@@ -341,38 +329,28 @@ app.get('*', (req, res) => {
       <head>
         <title>G2G ↔ SMMCost Bridge</title>
         <style>
-          body { font-family: system-ui; max-width: 600px; margin: 50px auto; padding: 20px; }
+          body { font-family: system-ui; max-width: 600px; margin: 50px auto; padding: 20px; text-align: center; }
           h1 { color: #333; }
-          .info { background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0; }
-          code { background: #e0e0e0; padding: 2px 6px; border-radius: 4px; }
-          .endpoints { margin-top: 20px; }
-          .endpoint { display: flex; justify-content: space-between; padding: 10px; border-bottom: 1px solid #eee; }
+          .info { background: #f5f5f5; padding: 30px; border-radius: 12px; margin: 30px 0; }
+          code { background: #e0e0e0; padding: 4px 8px; border-radius: 4px; }
+          .cmd { background: #1a1a1a; color: #0f0; padding: 15px; border-radius: 8px; font-family: monospace; margin: 20px 0; }
         </style>
       </head>
       <body>
         <h1>🚀 G2G ↔ SMMCost Bridge</h1>
         <div class="info">
           <p><strong>Server is running!</strong></p>
-          <p>Admin UI: Build the React app first, then access this URL.</p>
+          <p>Admin UI needs to be built first.</p>
         </div>
-        <h2>API Endpoints</h2>
-        <div class="endpoints">
-          <div class="endpoint">
-            <code>POST /webhook/g2g</code>
-            <span>G2G webhooks</span>
-          </div>
-          <div class="endpoint">
-            <code>GET /health</code>
-            <span>Server status</span>
-          </div>
-          <div class="endpoint">
-            <code>GET /pending</code>
-            <span>Pending orders</span>
-          </div>
+        <div class="cmd">
+          npm run build
         </div>
-        <p style="margin-top: 30px; color: #666;">
-          To enable the Admin UI, run: <code>npm run build</code> in the project directory.
-        </p>
+        <p>Run the command above to build the admin UI, then refresh this page.</p>
+        <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;">
+        <p><strong>API Endpoints:</strong></p>
+        <p><code>POST /webhook/g2g</code> - G2G webhooks</p>
+        <p><code>GET /health</code> - Server status</p>
+        <p><code>GET /pending</code> - Pending orders</p>
       </body>
       </html>
     `);
@@ -385,9 +363,8 @@ app.get('*', (req, res) => {
 let pollInterval;
 
 process.on('SIGINT', () => {
-  console.log('\n[SHUTDOWN] Stopping polling loop...');
+  console.log('\n[SHUTDOWN] Stopping...');
   clearInterval(pollInterval);
-  console.log('[SHUTDOWN] Exiting gracefully');
   process.exit(0);
 });
 
@@ -410,17 +387,16 @@ process.on('unhandledRejection', (reason) => {
 // ============================================
 const PORT = process.env.PORT || 4000;
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`========================================`);
   console.log(` G2G ↔ SMMCost Bridge Server`);
   console.log(`========================================`);
-  console.log(` Listening on port: ${PORT}`);
-  console.log(` Health: http://localhost:${PORT}/health`);
-  console.log(` Admin UI: http://localhost:${PORT}/admin`);
+  console.log(` Listening on: http://0.0.0.0:${PORT}`);
+  console.log(` Health: http://your-ip:${PORT}/health`);
+  console.log(` Admin UI: http://your-ip:${PORT}/admin`);
   console.log(` Polling interval: ${POLL_INTERVAL / 1000}s`);
   console.log(`========================================`);
 });
 
-// Start polling loop
 pollInterval = setInterval(pollOrders, POLL_INTERVAL);
 console.log('[INIT] Order polling started');
