@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "services": "node get-services.js"
+    "services": "node get-services.js",
+    "build": "cd src && npm install && npm run build",
+    "build:frontend": "cd src && npm install && npm run build"
   },
   "keywords": ["g2g", "smmcost", "automation", "smm"],
   "author": "",

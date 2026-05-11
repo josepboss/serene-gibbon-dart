@@ -2,9 +2,14 @@ require('dotenv').config();
 const express = require('express');
 const crypto = require('crypto');
 const axios = require('axios');
+const path = require('path');
 
 const app = express();
 app.use(express.json());
+
+// Serve static files from React build (if exists)
+const distPath = path.join(__dirname, 'dist');
+app.use(express.static(distPath));
 
 // Configuration
 const G2G_BASE_URL = 'https://open-api.g2g.com';
@@ -17,7 +22,6 @@ const pendingOrders = new Map();
 
 // Load service map
 const fs = require('fs');
-const path = require('path');
 const serviceMapPath = path.join(__dirname, 'service-map.json');
 let serviceMap = {};
 
@@ -251,16 +255,14 @@ async function pollOrders() {
 }
 
 // ============================================
-// G2G Delivery Confirmation (CORRECTED API)
+// G2G Delivery Confirmation
 // ============================================
 async function confirmG2GDelivery(orderData, smmStatus) {
   const { g2gOrderId, g2gDeliveryId, smmOrderId, qty } = orderData;
   
   try {
-    // Generate unique reference ID for this delivery
     const referenceId = `SMM-${smmOrderId}-${Date.now()}`;
     
-    // Correct API: POST /v2/orders/{order_id}/delivery
     const response = await axios.post(
       `${G2G_BASE_URL}/v2/orders/${g2gOrderId}/delivery`,
       {
@@ -289,7 +291,6 @@ async function confirmG2GDelivery(orderData, smmStatus) {
     if (err.response?.data) {
       console.error('[G2G] Response:', JSON.stringify(err.response.data));
     }
-    // Don't remove from tracking - will retry on next poll
     return null;
   }
 }
@@ -327,6 +328,58 @@ app.get('/pending', (req, res) => {
 });
 
 // ============================================
+// Serve React app for all other routes
+// ============================================
+app.get('*', (req, res) => {
+  const indexPath = path.join(distPath, 'index.html');
+  if (fs.existsSync(distPath) && fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>G2G ↔ SMMCost Bridge</title>
+        <style>
+          body { font-family: system-ui; max-width: 600px; margin: 50px auto; padding: 20px; }
+          h1 { color: #333; }
+          .info { background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0; }
+          code { background: #e0e0e0; padding: 2px 6px; border-radius: 4px; }
+          .endpoints { margin-top: 20px; }
+          .endpoint { display: flex; justify-content: space-between; padding: 10px; border-bottom: 1px solid #eee; }
+        </style>
+      </head>
+      <body>
+        <h1>🚀 G2G ↔ SMMCost Bridge</h1>
+        <div class="info">
+          <p><strong>Server is running!</strong></p>
+          <p>Admin UI: Build the React app first, then access this URL.</p>
+        </div>
+        <h2>API Endpoints</h2>
+        <div class="endpoints">
+          <div class="endpoint">
+            <code>POST /webhook/g2g</code>
+            <span>G2G webhooks</span>
+          </div>
+          <div class="endpoint">
+            <code>GET /health</code>
+            <span>Server status</span>
+          </div>
+          <div class="endpoint">
+            <code>GET /pending</code>
+            <span>Pending orders</span>
+          </div>
+        </div>
+        <p style="margin-top: 30px; color: #666;">
+          To enable the Admin UI, run: <code>npm run build</code> in the project directory.
+        </p>
+      </body>
+      </html>
+    `);
+  }
+});
+
+// ============================================
 // Graceful Shutdown
 // ============================================
 let pollInterval;
@@ -344,7 +397,6 @@ process.on('SIGTERM', () => {
   process.exit(0);
 });
 
-// Handle uncaught exceptions
 process.on('uncaughtException', (err) => {
   console.error('[ERROR] Uncaught exception:', err);
 });
@@ -364,7 +416,7 @@ app.listen(PORT, () => {
   console.log(`========================================`);
   console.log(` Listening on port: ${PORT}`);
   console.log(` Health: http://localhost:${PORT}/health`);
-  console.log(` Pending: http://localhost:${PORT}/pending`);
+  console.log(` Admin UI: http://localhost:${PORT}/admin`);
   console.log(` Polling interval: ${POLL_INTERVAL / 1000}s`);
   console.log(`========================================`);
 });
