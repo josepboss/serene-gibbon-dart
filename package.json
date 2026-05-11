@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "type": "module",
   "description": "Automation bridge between G2G marketplace and SMMCost SMM panel",
-  "main": "server.js",
+  "main": "server.cjs",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js",
+    "start": "node server.cjs",
+    "dev": "node --watch server.cjs",
     "services": "node get-services.js",
     "build": "vite build"
   },
